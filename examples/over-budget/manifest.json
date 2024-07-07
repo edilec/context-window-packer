@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1",
+  "segments": {
+    "system-policy": {
+      "kind": "instruction",
+      "priority": 0,
+      "mandatory": true,
+      "tokens": 180,
+      "text": "The declared token counts in this manifest stand in for counts produced by a real tokenizer."
+    },
+    "refusal-rules": {
+      "kind": "instruction",
+      "priority": 0,
+      "mandatory": true,
+      "tokens": 140,
+      "text": "Two mandatory instruction blocks that together exceed the window."
+    },
+    "optional-context": {
+      "kind": "context",
+      "priority": 60,
+      "tokens": 50,
+      "text": "This segment is optional and is never reached, because the run stops at the mandatory set."
+    }
+  }
+}

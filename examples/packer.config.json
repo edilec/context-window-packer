@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1",
+  "tokenCost": "estimate",
+  "budgetTokens": 240,
+  "limits": {
+    "maxSegments": 64,
+    "maxSegmentBytes": 65536,
+    "timeoutMs": 5000
+  }
+}
