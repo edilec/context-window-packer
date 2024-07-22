@@ -460,6 +460,32 @@ function withMaterial(material, report) {
 }
 
 /**
+ * The status a run's counts imply.
+ *
+ * Missing evidence outranks everything: a run that could not read part of its
+ * subject has no verdict to give about it, whatever the rest of the manifest
+ * looked like.
+ */
+export function statusFor({ errors, unexamined }) {
+  if (unexamined > 0) return 'incomplete'
+  return errors > 0 ? 'fail' : 'pass'
+}
+
+/**
+ * The pack a status permits.
+ *
+ * An `incomplete` run never carries a pack, however far the packing got. This
+ * is a second gate: `packContext` already stops before making a single packing
+ * decision once any evidence is known to be missing. It is kept, and kept
+ * exported and tested, because the first gate is a `return` in one place and a
+ * rule emitted after it would slip past -- and a window assembled from a
+ * partial reading is not a smaller answer, it is a wrong one.
+ */
+export function packFor(status, pack) {
+  return status === 'incomplete' ? null : pack
+}
+
+/**
  * Pack a manifest into a token budget, returning `{ report, material }`.
  *
  * `material` maps each resolved segment id to its text. It is what `--pack-out`
@@ -541,10 +567,11 @@ export async function packContextWithMaterial(options = {}) {
     const errors = findings.filter((finding) => finding.severity === 'error').length
     const warnings = findings.filter((finding) => finding.severity === 'warning').length
     const unexamined = findings.filter((finding) => INCOMPLETE_SET.has(finding.ruleId)).length
+    const status = statusFor({ errors, unexamined })
     return {
       schemaVersion: REPORT_SCHEMA_VERSION,
       tool: TOOL_ID,
-      status: unexamined > 0 ? 'incomplete' : (errors > 0 ? 'fail' : 'pass'),
+      status,
       summary: {
         ...emptyPackSummary,
         ...summaryExtra,
@@ -553,7 +580,7 @@ export async function packContextWithMaterial(options = {}) {
         info: findings.length - errors - warnings,
         unexamined,
       },
-      pack: unexamined > 0 ? null : pack,
+      pack: packFor(status, pack),
       findings,
     }
   }

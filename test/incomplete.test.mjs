@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { INCOMPLETE_RULES, RULE_SEVERITY, packContext } from '../src/index.mjs'
+import { INCOMPLETE_RULES, RULE_SEVERITY, packContext, packFor, statusFor } from '../src/index.mjs'
 import { cleanup, makeTree, manifest } from './helpers.mjs'
 
 const INCOMPLETE = new Set(INCOMPLETE_RULES)
@@ -85,4 +85,18 @@ test('a pass is never reached with nothing checked', async (t) => {
   const report = await packContext({ manifest: join(root, 'manifest.json'), root, budgetTokens: 1000, tokenCost: 'declared' })
   assert.equal(report.summary.checked, 0)
   assert.notEqual(report.status, 'pass', 'pass with checked: 0 is green on no evidence')
+})
+
+test('missing evidence outranks every other count when the status is decided', () => {
+  assert.equal(statusFor({ errors: 0, unexamined: 1 }), 'incomplete')
+  assert.equal(statusFor({ errors: 9, unexamined: 1 }), 'incomplete', 'errors do not outvote missing evidence')
+  assert.equal(statusFor({ errors: 1, unexamined: 0 }), 'fail')
+  assert.equal(statusFor({ errors: 0, unexamined: 0 }), 'pass')
+})
+
+test('an incomplete status carries no pack, whatever the packing produced', () => {
+  const produced = { budgetTokens: 10, usedTokens: 4, retained: [{ id: 'a', tokens: 4 }], dropped: [] }
+  assert.equal(packFor('incomplete', produced), null)
+  assert.equal(packFor('fail', produced), produced)
+  assert.equal(packFor('pass', produced), produced)
 })
