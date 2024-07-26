@@ -72,6 +72,25 @@ test('an empty document keeps its own diagnostic', () => {
   assert.equal(detailFor(''), 'Unexpected end of JSON input')
 })
 
+test('the double-quote backstop catches a shape the branch logic gets wrong', () => {
+  // This wording matches neither branch correctly: it ends with an offset
+  // rather than with "is not valid JSON", so the quoting pattern misses it and
+  // the offset branch keeps everything up to and including the offset -- quoted
+  // snippet and all. Nothing above the closing guard can save it.
+  //
+  // That is the whole reason the guard is not redundant: across 500,206
+  // distinct V8 parse messages, every message carrying no quoted snippet also
+  // carried no double quote at all, so a surviving double quote means a snippet
+  // survived, whatever the branches concluded -- including for wordings a
+  // future V8 invents that this helper has never been taught.
+  const invented = new Error('Unexpected token \'A\', "AKIAIOSFODNN7EXAMPLE" is bad JSON at position 3')
+  assert.equal(
+    parseFailureDetail(invented),
+    'the document could not be parsed as JSON',
+    'the backstop must refuse a detail that still carries a quoted snippet',
+  )
+})
+
 test('a message the helper has never seen falls back rather than quoting', () => {
   assert.equal(
     parseFailureDetail(new Error('Something new from a future V8 that "quotes the input" anyway')),
