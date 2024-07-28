@@ -37,6 +37,12 @@ const BRIEF = {
     'claim-a': { kind: 'claim', priority: 10, tokens: 15, cites: ['evidence-a'], text: 'a claim' },
     'evidence-a': { kind: 'evidence', priority: 60, tokens: 90, text: 'a table' },
     'claim-b': { kind: 'claim', priority: 20, tokens: 12, cites: ['evidence-b1', 'evidence-b2'], text: 'b claim' },
+    // A two-hop chain: the claim rests on a summary, and the summary rests on
+    // the table. Dropping the table would leave the summary unsupported and the
+    // claim resting on an unsupported summary, so all three travel together.
+    'claim-chain': { kind: 'claim', priority: 30, tokens: 8, cites: ['summary-chain'], text: 'chained claim' },
+    'summary-chain': { kind: 'evidence', priority: 75, tokens: 14, cites: ['table-chain'], text: 'a summary' },
+    'table-chain': { kind: 'evidence', priority: 80, tokens: 22, text: 'the underlying table' },
     'evidence-b1': { kind: 'evidence', priority: 70, unit: 'b-table', tokens: 30, text: 'b half one' },
     'evidence-b2': { kind: 'evidence', priority: 70, unit: 'b-table', tokens: 30, text: 'b half two' },
     background: { kind: 'context', priority: 90, tokens: 25, text: 'background' },
@@ -93,7 +99,10 @@ test('acceptance 1: a mandatory segment survives a budget that drops everything 
     .map((finding) => finding.location.pointer.replace('/segments/', ''))
     .sort()
   assert.deepEqual(explained, dropped)
-  assert.deepEqual(dropped, ['background', 'claim-a', 'claim-b', 'evidence-a', 'evidence-b1', 'evidence-b2'])
+  assert.deepEqual(dropped, [
+    'background', 'claim-a', 'claim-b', 'claim-chain',
+    'evidence-a', 'evidence-b1', 'evidence-b2', 'summary-chain', 'table-chain',
+  ])
 })
 
 test('acceptance 2: an over-budget mandatory set stops clearly', async (t) => {
@@ -131,6 +140,33 @@ test('acceptance 2: a mandatory claim drags its citations into the budget it mus
   assert.equal(report.status, 'fail')
   assert.equal(report.pack, null)
   assert.equal(report.summary.mandatoryTokens, 415)
+})
+
+test('acceptance 3: a citation chain travels together, not only its first hop', async (t) => {
+  const root = await makeTree(BRIEF)
+  t.after(() => cleanup(root))
+
+  // claim-chain rests on summary-chain, which rests on table-chain. A closure
+  // that followed only the first hop would retain the claim and the summary at
+  // budget 82, leaving the summary's own evidence outside the window -- so the
+  // property is stated over the whole range rather than at one number.
+  for (let budget = 60; budget <= 300; budget += 1) {
+    const ids = new Set((await pack(root, budget)).pack.retained.map((entry) => entry.id))
+    if (ids.has('claim-chain')) {
+      assert.ok(ids.has('summary-chain'), `budget ${budget} retained a claim without the summary it rests on`)
+      assert.ok(ids.has('table-chain'), `budget ${budget} retained a claim two hops from evidence it does not have`)
+    }
+    if (ids.has('summary-chain')) {
+      assert.ok(ids.has('table-chain'), `budget ${budget} retained a summary without its own evidence`)
+    }
+  }
+
+  // 60 mandatory + 8 + 14 + 22 is exactly 104, and nothing of higher priority
+  // fits in the 44 tokens that leaves, so the whole chain arrives there.
+  const whole = new Set((await pack(root, 104)).pack.retained.map((entry) => entry.id))
+  assert.ok(whole.has('claim-chain') && whole.has('summary-chain') && whole.has('table-chain'))
+  const short = new Set((await pack(root, 103)).pack.retained.map((entry) => entry.id))
+  assert.equal(short.has('claim-chain'), false, 'one token short and the chain does not arrive at all')
 })
 
 test('acceptance 3: no retained segment ever loses a citation target, at any budget', async (t) => {
