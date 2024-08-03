@@ -105,7 +105,7 @@ test('--pack-out refuses to name the manifest', async (t) => {
   ])
   assert.equal(result.status, 2)
   assert.equal(result.stdout, '')
-  assert.match(result.stderr, /never over an input/)
+  assert.match(result.stderr, /never rewrites what it reads/)
   assert.deepEqual(JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8')).schemaVersion, '1')
 })
 

@@ -426,7 +426,7 @@ async function resolveText(segment, context) {
       ),
     }
   }
-  return { text: decoded.text, file: relativeFile }
+  return { text: decoded.text, file: relativeFile, realFile }
 }
 
 function resolveCost(segment, text, tokenCost, manifestFile) {
@@ -455,8 +455,8 @@ function resolveCost(segment, text, tokenCost, manifestFile) {
   return { tokens: estimateTokens(text) }
 }
 
-function withMaterial(material, report) {
-  return { report, material }
+function withMaterial(material, report, sources = []) {
+  return { report, material, sources }
 }
 
 /**
@@ -551,6 +551,14 @@ export async function packContextWithMaterial(options = {}) {
   // documents, and a report that echoed its inputs would be a redaction hole
   // with a schema.
   const material = new Map()
+  /**
+   * The real path of every file this run read, for the write guard in the CLI.
+   * A destination is compared against these by device and inode, because a hard
+   * link to one of them shares no path with it and is the same file.
+   */
+  const sources = [realManifest]
+  /** Every return carries the same material and the same source list. */
+  const withRun = (report) => withMaterial(material, report, sources)
   const emptyPackSummary = {
     checked: 0,
     declared: 0,
@@ -594,7 +602,7 @@ export async function packContextWithMaterial(options = {}) {
       `The manifest could not be inspected (${sanitize(String(error.code ?? 'unreadable'), 40)}).`,
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({}, null))
+    return withRun(finish({}, null))
   }
   if (manifestInfo.size > limits.maxManifestBytes) {
     findings.push(makeFinding(
@@ -602,7 +610,7 @@ export async function packContextWithMaterial(options = {}) {
       `The manifest is ${manifestInfo.size} bytes, above the maxManifestBytes limit of ${limits.maxManifestBytes}. It was not read.`,
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({}, null))
+    return withRun(finish({}, null))
   }
 
   let bytes
@@ -614,7 +622,7 @@ export async function packContextWithMaterial(options = {}) {
       `The manifest could not be read (${sanitize(String(error.code ?? 'unreadable'), 40)}).`,
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({}, null))
+    return withRun(finish({}, null))
   }
   const decoded = decodeUtf8(bytes)
   if (!decoded.ok) {
@@ -623,7 +631,7 @@ export async function packContextWithMaterial(options = {}) {
       'The manifest is not valid UTF-8, so it could not be decoded.',
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({}, null))
+    return withRun(finish({}, null))
   }
   let document
   try {
@@ -634,7 +642,7 @@ export async function packContextWithMaterial(options = {}) {
       `The manifest is not valid JSON: ${sanitize(parseFailureDetail(error), 120)}.`,
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({}, null))
+    return withRun(finish({}, null))
   }
 
   const { segments, problems } = validateManifest(document, limits)
@@ -673,6 +681,7 @@ export async function packContextWithMaterial(options = {}) {
       findings.push(cost.problem)
       continue
     }
+    if (source.realFile !== undefined) sources.push(source.realFile)
     material.set(segment.id, source.text)
     resolved.push({
       ...segment,
@@ -688,7 +697,7 @@ export async function packContextWithMaterial(options = {}) {
       `The time budget of ${limits.timeoutMs}ms expired while resolving segments, so this run packed nothing. A window assembled from a partial reading is not a smaller answer, it is a wrong one.`,
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({ declared }, null))
+    return withRun(finish({ declared }, null))
   }
 
   // "pass" with nothing checked is green on no evidence. This fires both for a
@@ -701,7 +710,7 @@ export async function packContextWithMaterial(options = {}) {
       `No segment was resolved from this manifest (${declared} declared), so the run has no evidence to pack and no verdict to give.`,
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({ declared }, null))
+    return withRun(finish({ declared }, null))
   }
 
   // Anything already reported as missing evidence stops the run here, before a
@@ -710,7 +719,7 @@ export async function packContextWithMaterial(options = {}) {
   // resolve, or whose segments could not all be read, has no correct pack, only
   // a plausible one.
   if (findings.some((finding) => INCOMPLETE_SET.has(finding.ruleId))) {
-    return withMaterial(material, finish({ declared, checked: resolved.length }, null))
+    return withRun(finish({ declared, checked: resolved.length }, null))
   }
 
   const { units, edges } = buildUnits(resolved)
@@ -727,7 +736,7 @@ export async function packContextWithMaterial(options = {}) {
       `Citations from unit "${sanitize(depthExceeded.id, 80)}" reach ${depthExceeded.depth} hops, above the maxCitationDepth limit of ${limits.maxCitationDepth}. Nothing was packed.`,
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({ declared, checked: resolved.length, units: units.size }, null))
+    return withRun(finish({ declared, checked: resolved.length, units: units.size }, null))
   }
 
   for (const id of unitsInCycles(units, edges, closures)) {
@@ -747,7 +756,7 @@ export async function packContextWithMaterial(options = {}) {
       `The time budget of ${limits.timeoutMs}ms expired while choosing what fits, so this run packed nothing.`,
       { file: manifestFile },
     ))
-    return withMaterial(material, finish({ declared, checked: resolved.length, units: units.size }, null))
+    return withRun(finish({ declared, checked: resolved.length, units: units.size }, null))
   }
 
   const byId = new Map(resolved.map((segment) => [segment.id, segment]))
@@ -760,7 +769,7 @@ export async function packContextWithMaterial(options = {}) {
       { file: manifestFile },
       { evidence: sanitize(`mandatory units: ${names}`, 160) },
     ))
-    return withMaterial(material, finish({
+    return withRun(finish({
       declared,
       checked: resolved.length,
       units: units.size,
@@ -831,7 +840,7 @@ export async function packContextWithMaterial(options = {}) {
     throw new Error(`Packing invariant violated: ${violations.join('; ')}`)
   }
 
-  return withMaterial(material, finish({
+  return withRun(finish({
     declared,
     checked: resolved.length,
     units: units.size,

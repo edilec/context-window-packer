@@ -1,11 +1,23 @@
 #!/usr/bin/env node
 
-import { mkdir, realpath, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
+import { assertWritableDestination } from '../src/destination.mjs'
 import {
   assemblePack, formatReport, loadConfigFile, packContextWithMaterial,
 } from '../src/index.mjs'
+
+/**
+ * Create or truncate, and refuse to follow a link at the last component.
+ *
+ * `assertWritableDestination` refuses a symbolic link on sight, before anything
+ * is opened. This flag closes the window between that check and the open: a
+ * link planted in between is an ELOOP from the kernel rather than a write
+ * through it. Two independent checks because one of them can be raced.
+ */
+const WRITE_NO_FOLLOW = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW
 
 const HELP = `context-window-packer
 
@@ -155,35 +167,6 @@ function parseArguments(argv) {
   return options
 }
 
-/**
- * Refuse to write the pack over one of the inputs.
- *
- * Read-only by default is the contract; the one file this tool writes goes to a
- * destination the operator names, and naming an input is how a manifest gets
- * destroyed by a typo. Compared on real paths where the destination already
- * exists, so a symlink pointing back at an input is caught too.
- */
-async function assertSeparateDestination(packOut, manifestPath) {
-  const target = resolve(packOut)
-  let realTarget = target
-  try {
-    realTarget = await realpath(target)
-  } catch {
-    realTarget = target
-  }
-  let realManifest = resolve(manifestPath)
-  try {
-    realManifest = await realpath(realManifest)
-  } catch {
-    // An unreadable manifest is reported by the run itself; here it simply
-    // cannot collide with the destination.
-  }
-  if (realTarget === realManifest) {
-    throw new Error('--pack-out names the manifest; the pack is written to a separate destination, never over an input')
-  }
-  return target
-}
-
 async function main(argv) {
   let options
   try {
@@ -218,16 +201,6 @@ async function main(argv) {
     return 2
   }
 
-  let destination = null
-  if (options.packOut !== null) {
-    try {
-      destination = await assertSeparateDestination(options.packOut, options.manifest)
-    } catch (error) {
-      process.stderr.write(`${error.message}\n`)
-      return 2
-    }
-  }
-
   // Which source decided the budget and the cost model is a diagnostic, not
   // data: it goes to stderr so stdout stays parseable, but it is never left
   // unsaid, because a run whose budget came from somewhere the operator forgot
@@ -239,8 +212,9 @@ async function main(argv) {
 
   let report
   let material
+  let sources
   try {
-    ;({ report, material } = await packContextWithMaterial({
+    ;({ report, material, sources } = await packContextWithMaterial({
       manifest: options.manifest,
       ...(options.root === null ? {} : { root: options.root }),
       budgetTokens,
@@ -252,14 +226,35 @@ async function main(argv) {
     return 2
   }
 
-  if (destination !== null) {
+  if (options.packOut !== null) {
     const assembled = assemblePack(report, material)
     if (assembled === null) {
       process.stderr.write('No pack was produced, so nothing was written to --pack-out.\n')
     } else {
+      /**
+       * The destination is checked here, with the run finished, because only
+       * now is the list of files this run read complete: the manifest, the
+       * configuration file, and every segment file that was opened. A
+       * destination that turns out to be one of them -- by name, through a
+       * symbolic link, or as a hard link that shares no name with it at all --
+       * is refused, and refusing means the pack is not written and no report
+       * reaches stdout. A configuration that would destroy an input is not a
+       * configuration to carry on with.
+       */
+      const destination = resolve(options.packOut)
+      let target
       try {
         await mkdir(dirname(destination), { recursive: true })
-        await writeFile(destination, `${JSON.stringify(assembled, null, 2)}\n`, 'utf8')
+        target = await assertWritableDestination(destination, {
+          inputs: [...sources, ...(options.config === null ? [] : [resolve(options.config)])],
+          label: '--pack-out',
+        })
+      } catch (error) {
+        process.stderr.write(`${error.message}\n`)
+        return 2
+      }
+      try {
+        await writeFile(target, `${JSON.stringify(assembled, null, 2)}\n`, { encoding: 'utf8', flag: WRITE_NO_FOLLOW })
       } catch (error) {
         process.stderr.write(`--pack-out could not be written: ${error.code ?? error.message}\n`)
         return 2
