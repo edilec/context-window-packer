@@ -108,6 +108,28 @@ removed, rather than a test that checks a declaration about it:
 | Control characters never reach output | `test/sanitisation.test.mjs` crosses five character classes with eight manifest surfaces, identifiers included |
 | A parse failure never reproduces the document | `test/parse-failure.test.mjs`, including the `at position 1` case |
 | Paths stay inside the root | `test/confinement.test.mjs` plants a real symlink |
+| `--pack-out` never destroys a file it was not given | `test/destination.test.mjs`, one case per hole and one per legitimate destination |
+
+## What `--pack-out` is checked against
+
+`--pack-out` is the one file this tool writes. The destination is a path the
+operator names, and a path is not a file: what the path resolves to is a
+separate question, and three different answers to it destroyed three different
+files here before the guard was written. Every one of them exited 0 and reported
+that the pack had been written.
+
+| Refused | Why the obvious check misses it |
+| --- | --- |
+| A symbolic link at the destination | `realpath` resolves it, and resolving is the dangerous act. `lstat` refuses it before anything is opened, and the write then uses `O_NOFOLLOW` so a link planted between the check and the open is an error from the kernel rather than a write through it. |
+| A hard link to an input | It has no target to resolve and shares no path with the input, so `realpath` and string comparison both call it a different file. It is the same file; only device plus inode sees that. |
+| Any file this run read | Not only the manifest: every segment file that was opened, and the configuration file. The earlier guard compared the manifest alone, so naming a segment destroyed a document the run had just read. |
+| A destination that is not a regular file | A directory or a device node at the destination is not a pack this tool wrote. |
+| A destination whose resolved parent leaves a declared root | Written and tested, and not used by this CLI: `--pack-out` deliberately names a file anywhere the operator likes, because writing a pack into the tree the next run reads is the thing to avoid. There is no root here for a parent to escape, and the check is pinned by a unit case so the copy stays the guard rather than a subset of it. |
+
+Refusing means exit 2 with nothing on stdout and nothing written: a
+configuration that would destroy an input is not a configuration to carry on
+with. The list of inputs is complete only once the run has finished, so the
+check happens immediately before the write rather than at startup.
 
 ## Bounds
 

@@ -262,8 +262,12 @@ This tool deliberately does not:
   could forge a delimiter is exactly the input this tool expects.
 - **Read or embed anything on the network.** There is no fetching, no provider
   call, no telemetry, at any time, including in the tests.
-- **Write anything except `--pack-out`.** It is read-only otherwise, and it
-  refuses a `--pack-out` that names the manifest.
+- **Write anything except `--pack-out`.** It is read-only otherwise, and a
+  `--pack-out` that turns out to be a file this run read — the manifest, a
+  segment, the configuration file — is refused, whether it is named directly,
+  reached through a symbolic link, or hard-linked to one of them under a
+  different name. A refused destination writes nothing and exits 2. See
+  [`docs/design.md`](docs/design.md#what---pack-out-is-checked-against).
 - **Count what your model will actually charge you.** Token cost here is the
   cost of the material. Prompt templating, tool schemas, chat framing and the
   model's own reply are not in the manifest and are not counted.
