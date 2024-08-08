@@ -455,8 +455,8 @@ function resolveCost(segment, text, tokenCost, manifestFile) {
   return { tokens: estimateTokens(text) }
 }
 
-function withMaterial(material, report, sources = []) {
-  return { report, material, sources }
+function withMaterial(material, report, sources = [], root = null) {
+  return { report, material, sources, root }
 }
 
 /**
@@ -486,10 +486,13 @@ export function packFor(status, pack) {
 }
 
 /**
- * Pack a manifest into a token budget, returning `{ report, material }`.
+ * Pack a manifest into a token budget, returning `{ report, material, sources, root }`.
  *
  * `material` maps each resolved segment id to its text. It is what `--pack-out`
- * writes and it is never part of the report.
+ * writes and it is never part of the report. `sources` is the real path of every
+ * file the run read and `root` is the real root, both for the write guard in the
+ * CLI: a destination is refused when it is one of those files, and when it lands
+ * inside that tree.
  *
  * Throws a `TypeError` for anything that makes the run impossible to define --
  * no manifest, no budget, no cost model, an unknown limit, a root that is not a
@@ -557,8 +560,15 @@ export async function packContextWithMaterial(options = {}) {
    * link to one of them shares no path with it and is the same file.
    */
   const sources = [realManifest]
-  /** Every return carries the same material and the same source list. */
-  const withRun = (report) => withMaterial(material, report, sources)
+  /**
+   * Every return carries the same material, the same source list and the same
+   * real root. The root travels back because the CLI has to refuse a
+   * `--pack-out` that lands inside the tree this run read, and only this
+   * function knows what that tree resolved to: `--root` is optional and
+   * defaults to the directory holding the manifest, reached through whatever
+   * links lie on the way.
+   */
+  const withRun = (report) => withMaterial(material, report, sources, realRoot)
   const emptyPackSummary = {
     checked: 0,
     declared: 0,

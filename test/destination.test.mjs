@@ -17,11 +17,11 @@
  */
 
 import assert from 'node:assert/strict'
-import { link, mkdir, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { link, mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import test from 'node:test'
 
-import { DestinationError, assertWritableDestination } from '../src/destination.mjs'
+import { DestinationError, assertOutsideRoot, assertWritableDestination } from '../src/destination.mjs'
 import { cleanup, makeTree, manifest, runCli } from './helpers.mjs'
 
 const KEPT = 'NOTES-THE-USER-KEPT-HERE\n'
@@ -117,13 +117,19 @@ test('a segment file this run read is an input too, not just the manifest', asyn
   // The previous guard compared the destination against the manifest alone, so
   // naming a segment file destroyed a document the same run had just read and
   // exited 0 saying the pack was written.
+  //
+  // A segment always lies inside the root -- confinement refuses one that does
+  // not -- so the root rule reaches this destination first and names the tree
+  // rather than the file. What is asserted here is that it is refused and that
+  // the document survives. The identity comparison that catches a segment under
+  // a name of its own is pinned by the hard-link case below, whose destination
+  // sits outside the root and can only be caught by device and inode.
   const { root } = await withTree(t)
   const segment = join(root, 'segments', 'background.md')
 
   const result = pack(root, segment)
   assert.equal(result.status, 2, result.stderr)
   assert.equal(result.stdout, '')
-  assert.match(result.stderr, /same file as an input/)
   assert.equal(await readFile(segment, 'utf8'), SEGMENT, 'the segment is byte-identical')
 })
 
@@ -204,4 +210,110 @@ test('the identity comparison is the one a stat makes', async (t) => {
   assert.equal(a.dev === b.dev && a.ino === b.ino, true)
   await assert.rejects(() => assertWritableDestination(hard, { inputs: [source] }), /same file as an input/)
   await assert.doesNotReject(() => assertWritableDestination(hard, { inputs: [] }))
+})
+/**
+ * The opposite boundary: `--pack-out` may be anywhere EXCEPT inside the tree
+ * this run reads.
+ *
+ * Three of the four holes above are about a destination that is one of the
+ * files the run opened. This one is about a file it did not: a sibling document
+ * in the same tree, belonging to another manifest or waiting to be referenced
+ * by the next edit. The tool destroyed one at exit 0 with
+ * `wrote 8 retained segment(s)` on stderr, because the only thing the guard
+ * compared the destination against was the list of files this particular run
+ * happened to read.
+ *
+ * Refusing it also gives the resolved-parent check something real to enforce
+ * here, which is why the lexical and the symlinked spellings each get a case.
+ */
+
+test('a destination inside the root is refused, and the sibling document it named survives', async (t) => {
+  const { root } = await withTree(t)
+  const bystander = join(root, 'segments', 'another-managers-notes.md')
+  await writeFile(bystander, KEPT)
+
+  const result = pack(root, bystander)
+  assert.equal(result.status, 2, result.stderr)
+  assert.equal(result.stdout, '', 'a refused destination is a configuration error, so stdout stays empty')
+  assert.match(result.stderr, /the tree this run reads/)
+  assert.equal(await readFile(bystander, 'utf8'), KEPT, 'a file this run never read is still untouched')
+})
+
+test('a ".." segment back into the root is refused, and creates nothing there', async (t) => {
+  const { root, out } = await withTree(t)
+  const destination = join(out, '..', basename(root), 'packed.json')
+
+  const result = pack(root, destination)
+  assert.equal(result.status, 2, result.stderr)
+  assert.equal(result.stdout, '')
+  assert.equal((await readdir(root)).includes('packed.json'), false, 'nothing was written into the root')
+})
+
+test('a symlinked parent pointing into the root is refused, where a lexical check passes', async (t) => {
+  const { root, out } = await withTree(t)
+  await symlink(root, join(out, 'link'))
+  const destination = join(out, 'link', 'packed.json')
+
+  // The reason the parent is resolved rather than compared: the path the
+  // operator typed contains no part of the root at all.
+  assert.equal(destination.startsWith(await realpath(root)), false, 'a prefix test would see nothing wrong')
+
+  const result = pack(root, destination)
+  assert.equal(result.status, 2, result.stderr)
+  assert.equal(result.stdout, '')
+  assert.equal((await readdir(root)).includes('packed.json'), false)
+})
+
+test('a parent that does not exist yet is resolved before it is judged, and no directory is created', async (t) => {
+  // The CLI creates the destination's parent, so the parent is usually absent
+  // at the moment it has to be judged. Falling back to the lexical path there
+  // would be a lexical check wearing a resolved check's uniform -- and it would
+  // also leave a trail of new directories inside the tree.
+  const { root, out } = await withTree(t)
+  await symlink(root, join(out, 'link'))
+
+  const result = pack(root, join(out, 'link', 'new', 'deep', 'packed.json'))
+  assert.equal(result.status, 2, result.stderr)
+  assert.equal(result.stdout, '')
+  assert.equal((await readdir(root)).includes('new'), false, 'not even a directory was created in the root')
+})
+
+test('allowed: a sibling directory whose name merely starts with the root\'s is not inside it', async (t) => {
+  // `withTree` names the output directory `<root>-out` on purpose: a prefix
+  // test without a separator refuses it, which would be a false refusal of the
+  // ordinary case.
+  const { root, out } = await withTree(t)
+  assert.equal(out.startsWith(root), true, 'the two names really do share a prefix')
+
+  const result = pack(root, join(out, 'packed.json'))
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(await readFile(join(out, 'packed.json'), 'utf8')).tool, 'context-window-packer')
+})
+
+test('allowed: a symbolically linked parent outside the root is still followed', async (t) => {
+  // Outside the root the destination is unconfined, which `--help` says. The
+  // refusal is about the root, not about links in general.
+  const { root, out, elsewhere } = await withTree(t)
+  await symlink(elsewhere, join(out, 'linkout'))
+
+  const result = pack(root, join(out, 'linkout', 'packed.json'))
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal((await readdir(elsewhere)).includes('packed.json'), true)
+})
+
+test('assertOutsideRoot compares resolved parents, not spellings', async (t) => {
+  const { root, out } = await withTree(t)
+  const realRoot = await realpath(root)
+  await symlink(root, join(out, 'link'))
+
+  await assert.rejects(
+    () => assertOutsideRoot(join(realRoot, 'packed.json'), root),
+    (error) => error instanceof DestinationError && /the tree this run reads/.test(error.message),
+  )
+  await assert.rejects(() => assertOutsideRoot(join(out, 'link', 'packed.json'), root), DestinationError)
+  await assert.rejects(() => assertOutsideRoot(join(out, '..', basename(realRoot), 'packed.json'), root), DestinationError)
+  await assert.doesNotReject(
+    () => assertOutsideRoot(join(out, 'packed.json'), root),
+    'a destination outside the root is the ordinary case and must still be allowed',
+  )
 })

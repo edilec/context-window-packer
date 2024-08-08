@@ -10,22 +10,85 @@
  * passes a data-loss test while making `--pack-out` useless.
  *
  * `root` is left null by this tool's CLI and the check is still written and
- * still tested. `--pack-out` names a file anywhere the operator likes -- it is
- * emphatically not confined to the input root, because writing a pack into the
- * tree the next run reads is the thing to avoid -- so there is no boundary for
- * a resolved parent to escape. The other two checks do the work here, and the
- * root check is pinned by a unit case so the copy stays the guard rather than
- * drifting into a subset of it.
+ * still tested. `--pack-out` names a file anywhere the operator likes, so there
+ * is no boundary for a resolved parent to be confined *inside*. The root check
+ * is pinned by a unit case so the copy stays the guard rather than drifting
+ * into a subset of it.
+ *
+ * What this tool needs is the opposite boundary, and `assertOutsideRoot` below
+ * is it: the destination may be anywhere except inside the tree the run reads.
+ * That rule is this package's own, not part of the copied guard, so it lives in
+ * its own function and the copy stays comparable to the reference.
  */
 
 import { lstat, realpath, stat } from 'node:fs/promises'
-import { dirname, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
 /** Raised when a destination cannot be written to safely. The caller exits 2. */
 export class DestinationError extends Error {
   constructor(message) {
     super(message)
     this.name = 'DestinationError'
+  }
+}
+
+/**
+ * The real path of `directory`, or the closest existing ancestor with the
+ * missing segments appended.
+ *
+ * `realpath` fails outright on a directory that is not there, and the CLI
+ * creates the destination's parent, so the parent frequently does not exist
+ * yet at the moment it has to be judged. Falling back to the lexical path
+ * would be a lexical check wearing a resolved check's uniform: with
+ * `outside/link -> root`, the parent `outside/link/new` does not exist,
+ * `realpath` fails, and a lexical comparison sees nothing inside the root while
+ * the write lands in it.
+ */
+async function realDirectoryOrNearest(directory) {
+  const wanted = resolve(directory)
+  let current = wanted
+  const missing = []
+  for (;;) {
+    try {
+      return join(await realpath(current), ...missing)
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return wanted
+      missing.unshift(basename(current))
+      current = parent
+    }
+  }
+}
+
+/**
+ * Refuse a destination that lands inside the tree this run reads.
+ *
+ * This tool's own rule rather than part of the copied guard above, and the
+ * inverse of that guard's `root` option: `--pack-out` is confined *out of* the
+ * root, not into one. A pack written into the tree the next run reads is read
+ * back as material -- and on the way there it overwrites whatever file it
+ * names, which need not be a file this particular run happened to open. That is
+ * how a manifest's sibling document gets destroyed at exit 0 with `wrote N
+ * retained segment(s)` on stderr.
+ *
+ * The parent is **resolved** before it is compared, for the same reason hole 2
+ * exists: a lexical prefix test passes for `outside/link/pack.json` where
+ * `link` points into the root, and for a `..` segment that walks back into it.
+ * Outside the root the destination stays unconfined, which is deliberate and
+ * said so in `--help`.
+ *
+ * @throws {DestinationError} when the destination would land inside the root.
+ */
+export async function assertOutsideRoot(destination, root, label = '--pack-out') {
+  const realRoot = await realpath(resolve(root))
+  const parent = await realDirectoryOrNearest(dirname(resolve(destination)))
+  if (parent === realRoot || parent.startsWith(realRoot.endsWith(sep) ? realRoot : realRoot + sep)) {
+    throw new DestinationError(
+      `${label} resolves into ${realRoot}, the tree this run reads. A pack written there is `
+      + `read back as material by the next run, and it overwrites whatever file it names on the `
+      + `way. A link or a ".." segment on the way in does not make it a different tree. `
+      + `Name a destination outside the root.`,
+    )
   }
 }
 

@@ -4,7 +4,7 @@ import { constants } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
-import { assertWritableDestination } from '../src/destination.mjs'
+import { assertOutsideRoot, assertWritableDestination } from '../src/destination.mjs'
 import {
   assemblePack, formatReport, loadConfigFile, packContextWithMaterial,
 } from '../src/index.mjs'
@@ -41,7 +41,17 @@ Options:
                          boundary of what may be read (default: the directory
                          holding the manifest)
   --config FILE          JSON configuration: tokenCost, budgetTokens, limits
-  --pack-out FILE        Write the retained segments, with their text, as JSON
+  --pack-out FILE        Write the retained segments, with their text, as JSON.
+                         The destination must lie outside --root: a pack written
+                         into the tree this tool reads is read back as material
+                         by the next run, and overwrites whatever file it names
+                         on the way. Its parent is resolved before that is
+                         judged, so a link or a ".." segment back into the root
+                         is refused too. Outside the root the destination is
+                         otherwise unconfined -- a symbolically linked parent
+                         directory there is followed -- but it may not be a
+                         symbolic link itself, may not be anything other than a
+                         regular file, and may not be any file this run read
   --json                 Emit the machine-readable report on stdout
   --max-citation-depth N Maximum citation hops from one unit (default 8)
   --max-citations N      Maximum citations per segment (default 20)
@@ -213,8 +223,9 @@ async function main(argv) {
   let report
   let material
   let sources
+  let root
   try {
-    ;({ report, material, sources } = await packContextWithMaterial({
+    ;({ report, material, sources, root } = await packContextWithMaterial({
       manifest: options.manifest,
       ...(options.root === null ? {} : { root: options.root }),
       budgetTokens,
@@ -240,10 +251,18 @@ async function main(argv) {
        * is refused, and refusing means the pack is not written and no report
        * reaches stdout. A configuration that would destroy an input is not a
        * configuration to carry on with.
+       *
+       * The list of files this run read is not the same thing as the tree it
+       * reads, and only the second one covers a sibling document this run never
+       * opened. So the destination is also refused when its resolved parent
+       * lands inside the root.
        */
       const destination = resolve(options.packOut)
       let target
       try {
+        // Before `mkdir`, not after: a destination inside the root must not
+        // leave a trail of created directories in the tree the next run reads.
+        await assertOutsideRoot(destination, root, '--pack-out')
         await mkdir(dirname(destination), { recursive: true })
         target = await assertWritableDestination(destination, {
           inputs: [...sources, ...(options.config === null ? [] : [resolve(options.config)])],

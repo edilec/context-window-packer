@@ -10,12 +10,26 @@
 
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import test from 'node:test'
 
 import { cleanup, makeTree, manifest, runCli, runReport } from './helpers.mjs'
 
 const GOOD = { kind: 'instruction', priority: 0, mandatory: true, tokens: 5, text: 'obey the rules' }
+
+/**
+ * A pack destination beside the root rather than inside it.
+ *
+ * `--pack-out` may not land in the tree the run reads: a pack written there is
+ * read back as material by the next run, and it overwrites whatever file it
+ * names on the way. `test/destination.test.mjs` pins the refusal; these cases
+ * only need a destination that is not refused.
+ */
+function outsideRoot(root, t) {
+  const directory = join(root, '..', `${basename(root)}-cli-out`)
+  t.after(() => cleanup(directory))
+  return join(directory, 'packed.json')
+}
 const TREE = {
   'manifest.json': manifest({
     good: GOOD,
@@ -80,7 +94,7 @@ test('without --json stdout carries the human summary instead', async (t) => {
 test('--pack-out writes the retained segments with their text, to a separate destination', async (t) => {
   const root = await makeTree(TREE)
   t.after(() => cleanup(root))
-  const destination = join(root, 'out', 'packed.json')
+  const destination = outsideRoot(root, t)
 
   const result = runCli([
     '--manifest', join(root, 'manifest.json'), '--root', root, '--json',
@@ -96,6 +110,11 @@ test('--pack-out writes the retained segments with their text, to a separate des
 })
 
 test('--pack-out refuses to name the manifest', async (t) => {
+  // The manifest lies inside the root by construction, so the root rule reaches
+  // this destination before the identity comparison does. Both refusals matter
+  // and both are pinned: the identity one by the hard-link cases in
+  // test/destination.test.mjs, whose destinations sit outside the root and can
+  // only be caught by device and inode.
   const root = await makeTree(TREE)
   t.after(() => cleanup(root))
 
@@ -105,14 +124,14 @@ test('--pack-out refuses to name the manifest', async (t) => {
   ])
   assert.equal(result.status, 2)
   assert.equal(result.stdout, '')
-  assert.match(result.stderr, /never rewrites what it reads/)
+  assert.match(result.stderr, /the tree this run reads/)
   assert.deepEqual(JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8')).schemaVersion, '1')
 })
 
 test('nothing is written to --pack-out when no pack was produced', async (t) => {
   const root = await makeTree(TREE)
   t.after(() => cleanup(root))
-  const destination = join(root, 'out', 'packed.json')
+  const destination = outsideRoot(root, t)
 
   const result = runCli([
     '--manifest', join(root, 'manifest.json'), '--root', root,
