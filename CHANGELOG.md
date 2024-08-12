@@ -19,10 +19,10 @@ First working release.
 - Missing, undecodable, unparseable or bounded-out evidence produces an
   `incomplete` report with no pack and exit 2.
 - `--pack-out` writes the retained segments and their verbatim text as JSON to a
-  destination that is checked before it is opened: not a symbolic link, not a
-  directory, and not any file this run read -- the manifest, a segment or the
-  configuration file -- whether it is named directly, reached through a link, or
-  hard-linked to one of them under a different name.
+  destination that is checked before it is opened: outside `--root`, not a
+  symbolic link, not a directory, and not any file this run read -- the
+  manifest, a segment or the configuration file -- whether it is named directly,
+  reached through a link, or hard-linked to one of them under a different name.
 
 ### Fixed before release
 
@@ -45,3 +45,15 @@ against every file the run read, and `O_NOFOLLOW` at the open for the window in
 between. `test/destination.test.mjs` has one case per hole and one per
 legitimate destination, because a guard that refuses everything passes a
 data-loss test while making `--pack-out` useless.
+
+A fourth way survived that round. The guard compared the destination against the
+files the run *read*, and a tree holds files a run does not read: naming
+`segments/another-managers-notes.md` destroyed it at exit 0 with `wrote 8
+retained segment(s)` on stderr, and `docs/design.md` argued in the same release
+that writing a pack into the tree the next run reads was the thing to avoid.
+`assertOutsideRoot` -- this package's own rule, the inverse of the copied
+guard's `root` option -- now refuses a destination whose **resolved** parent
+lands inside `--root`, before the destination's parent directories are created,
+so a `..` segment or a symbolic link pointing back in is refused and leaves
+nothing behind. Outside the root the destination stays unconfined, and `--help`
+says so.

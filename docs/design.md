@@ -109,6 +109,7 @@ removed, rather than a test that checks a declaration about it:
 | A parse failure never reproduces the document | `test/parse-failure.test.mjs`, including the `at position 1` case |
 | Paths stay inside the root | `test/confinement.test.mjs` plants a real symlink |
 | `--pack-out` never destroys a file it was not given | `test/destination.test.mjs`, one case per hole and one per legitimate destination |
+| `--pack-out` never lands in the tree the run reads | `test/destination.test.mjs`, the direct, the `..` and the symlinked-parent spellings, plus the allowed destinations beside the root |
 
 ## What `--pack-out` is checked against
 
@@ -124,12 +125,19 @@ that the pack had been written.
 | A hard link to an input | It has no target to resolve and shares no path with the input, so `realpath` and string comparison both call it a different file. It is the same file; only device plus inode sees that. |
 | Any file this run read | Not only the manifest: every segment file that was opened, and the configuration file. The earlier guard compared the manifest alone, so naming a segment destroyed a document the run had just read. |
 | A destination that is not a regular file | A directory or a device node at the destination is not a pack this tool wrote. |
-| A destination whose resolved parent leaves a declared root | Written and tested, and not used by this CLI: `--pack-out` deliberately names a file anywhere the operator likes, because writing a pack into the tree the next run reads is the thing to avoid. There is no root here for a parent to escape, and the check is pinned by a unit case so the copy stays the guard rather than a subset of it. |
+| A destination whose resolved parent lands **inside** `--root` | The list of files a run read is not the same thing as the tree it reads. A sibling document this run never opened -- another manifest's evidence, a file the next edit will reference -- is destroyed by a `--pack-out` that names it, and a pack left in the tree is read back as material by the next run. The parent is resolved before it is judged, so a `..` segment or a symbolic link pointing back in is refused too, and the check runs before the destination's parent directories are created so a refusal leaves no trail inside the tree. |
+| A destination whose resolved parent leaves a declared root | The copied guard's own `root` option, which is the *inverse* boundary and is left null by this CLI: outside `--root` the destination is deliberately unconfined, because a pack belongs anywhere the operator likes as long as it is not in the tree. `--help` says so. The check is still pinned by a unit case so the copy stays the guard rather than a subset of it. |
 
 Refusing means exit 2 with nothing on stdout and nothing written: a
 configuration that would destroy an input is not a configuration to carry on
 with. The list of inputs is complete only once the run has finished, so the
 check happens immediately before the write rather than at startup.
+
+The root rule was missing for a release. `--pack-out` accepted a destination
+inside `--root`, overwrote a document the run had not opened, and exited 0 with
+`wrote 8 retained segment(s)` on stderr -- while this page argued that writing a
+pack into the tree the next run reads was the thing to avoid. Naming a hazard is
+not guarding it.
 
 ## Bounds
 
