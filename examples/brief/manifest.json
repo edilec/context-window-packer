@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1",
+  "segments": {
+    "task": {
+      "kind": "instruction",
+      "priority": 0,
+      "mandatory": true,
+      "text": "Summarise what the evidence says about regional latency and about where platform spend is going. Answer in at most six sentences."
+    },
+    "guardrails": {
+      "kind": "instruction",
+      "priority": 0,
+      "mandatory": true,
+      "file": "segments/guardrails.md"
+    },
+    "claim-latency": {
+      "kind": "claim",
+      "priority": 10,
+      "cites": ["evidence-latency-p50", "evidence-latency-p99"],
+      "text": "Tail latency in eu-west is materially worse than in us-east, and the gap is wider at p99 than at p50."
+    },
+    "evidence-latency-p50": {
+      "kind": "evidence",
+      "priority": 40,
+      "unit": "latency-table",
+      "file": "segments/latency-p50.md"
+    },
+    "evidence-latency-p99": {
+      "kind": "evidence",
+      "priority": 40,
+      "unit": "latency-table",
+      "file": "segments/latency-p99.md"
+    },
+    "claim-cost": {
+      "kind": "claim",
+      "priority": 20,
+      "cites": ["evidence-cost"],
+      "text": "Egress is the fastest-growing component of platform spend."
+    },
+    "evidence-cost": {
+      "kind": "evidence",
+      "priority": 50,
+      "file": "segments/cost-breakdown.md"
+    },
+    "background": {
+      "kind": "context",
+      "priority": 90,
+      "file": "segments/background.md"
+    }
+  }
+}

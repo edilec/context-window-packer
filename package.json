@@ -1,0 +1,52 @@
+{
+  "name": "context-window-packer",
+  "version": "0.1.0",
+  "description": "Pack document segments into a token budget by stable priority, keeping mandatory instructions and atomic evidence units whole and citations with the claims that rest on them, and explain everything dropped.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "node --check bin/context-window-packer.mjs && node --check src/cost.mjs && node --check src/destination.mjs && node --check src/index.mjs && node --check src/manifest.mjs && node --check src/pack.mjs && node --check src/text.mjs && node --check test/acceptance.test.mjs && node --check test/cli.test.mjs && node --check test/confinement.test.mjs && node --check test/cost.test.mjs && node --check test/destination.test.mjs && node --check test/determinism.test.mjs && node --check test/helpers.mjs && node --check test/incomplete.test.mjs && node --check test/limits.test.mjs && node --check test/ordering.test.mjs && node --check test/pack.test.mjs && node --check test/parse-failure.test.mjs && node --check test/rule-catalog.test.mjs && node --check test/sanitisation.test.mjs && node --check test/severity-outcomes.test.mjs && node --check test/text.test.mjs",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/**",
+    "example": "node bin/context-window-packer.mjs --manifest examples/brief/manifest.json --config examples/packer.config.json --pack-out build/example-pack.json",
+    "example:failing": "node bin/context-window-packer.mjs --manifest examples/over-budget/manifest.json --token-cost declared --budget-tokens 256; test $? -eq 1",
+    "pack:check": "npm pack --dry-run",
+    "check": "npm run lint && npm test && npm run example && npm run example:failing && npm run pack:check"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edilec/context-window-packer.git"
+  },
+  "bin": {
+    "context-window-packer": "./bin/context-window-packer.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "examples",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "context-window",
+    "token-budget",
+    "prompt-assembly",
+    "llm",
+    "citations",
+    "retrieval",
+    "cli"
+  ],
+  "author": "Edilec Private Limited",
+  "bugs": {
+    "url": "https://github.com/edilec/context-window-packer/issues"
+  },
+  "homepage": "https://github.com/edilec/context-window-packer#readme"
+}
